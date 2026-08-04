@@ -1,11 +1,10 @@
-from flask import Flask, request, Response, stream_with_context, jsonify
-import subprocess
+from flask import Flask, request, Response, jsonify
 import sys
 import requests
-import tempfile
 import os
 import re
-import shutil
+import io
+from contextlib import redirect_stdout
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -43,17 +42,10 @@ def fetch_tool():
         return 'print(" Default tool (update TOOL_URL)")'
 
 def sanitize_code(code):
-    """
-    استبدال جميع استدعاءات input() بقيم افتراضية لمنع EOFError.
-    """
-    # استبدال input() بدون وسيط
-    code = re.sub(r'input\s*\(\)', '"default"', code)
-    # استبدال input('prompt') بـ "default" أيضًا
+    # استبدال جميع استدعاءات input() بقيم افتراضية لمنع EOFError
     code = re.sub(r'input\s*\([^)]*\)', '"default"', code)
-    # معالجة حالات مثل int(input()) -> int("default") -> 0 (لكننا نفضل استخدام 42)
     code = re.sub(r'int\s*\(\s*input\s*\([^)]*\)\s*\)', '42', code)
     code = re.sub(r'float\s*\(\s*input\s*\([^)]*\)\s*\)', '3.14', code)
-    # يمكن إضافة المزيد من التحويلات حسب الحاجة
     return code
 
 @app.route("/run", methods=["POST"])
@@ -70,38 +62,18 @@ def run_tool():
         }), 403
 
     tool_code = fetch_tool()
-    tool_code = sanitize_code(tool_code)  # تطبيق التعقيم
+    tool_code = sanitize_code(tool_code)
 
-    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding='utf-8') as tmp:
-        tmp.write(tool_code)
-        tmp_path = tmp.name
+    # تنفيذ الكود مباشرة في نفس العملية
+    try:
+        f = io.StringIO()
+        with redirect_stdout(f):
+            exec(tool_code, {})  # بيئة فارغة لتقييد الوصول
+        output = f.getvalue()
+    except Exception as e:
+        output = f"Error executing tool: {str(e)}"
 
-    def generate():
-        try:
-            # استخدام Python النظامي لتجنب مشاكل البيئة الافتراضية
-            if sys.prefix != sys.base_prefix:
-                python_path = shutil.which('python3') or '/usr/bin/python3'
-            else:
-                python_path = sys.executable
-
-            proc = subprocess.Popen(
-                [python_path, tmp_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
-            for line in iter(proc.stdout.readline, ''):
-                if line:
-                    yield line
-            proc.wait()
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except:
-                pass
-
-    return Response(stream_with_context(generate()), mimetype="text/plain")
+    return Response(output, mimetype="text/plain")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
