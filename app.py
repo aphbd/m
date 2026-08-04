@@ -4,7 +4,7 @@ import requests
 url = os.getenv("r")
 
 if not url:
-    print("error: environment variable 'r' not found")
+    print("error")
     exit()
 
 try:
