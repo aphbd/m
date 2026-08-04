@@ -6,7 +6,6 @@ load_dotenv()
 
 app = Flask(__name__)
 
-
 LICENSES_URL = os.getenv("L")
 TOOL_URL = os.getenv("TO")
 
@@ -44,10 +43,23 @@ def run_tool():
         return jsonify({"error": "Invalid data"}), 400
 
     fp = data["fingerprint"]
+    device_info = data.get("device_info", {})  # استقبال المعلومات الإضافية
+
+    # طباعة المعلومات في سجل الخادم
+    print(f"[INFO] Received fingerprint: {fp}")
+    if device_info:
+        print("[INFO] Device info:")
+        for key, value in device_info.items():
+            print(f"    {key}: {value}")
+
     if not is_licensed(fp):
+        print(f"[WARN] Unauthorized fingerprint: {fp}")
+        # إرجاع الرفض مع المعلومات المرسلة لتظهر للعميل
         return jsonify({
             "status": "unauthorized",
-            "message": "Device not licensed. Contact the developer."
+            "message": "Device not licensed. Contact the developer.",
+            "fingerprint": fp,
+            "device_info": device_info   # إعادة المعلومات في الرد
         }), 403
 
     tool_code = fetch_tool()
@@ -76,7 +88,6 @@ def run_tool():
     return Response(stream_with_context(generate()), mimetype="text/plain")
 
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5000))
     print(" License server running...")
-    app.run(host="0.0.0.0", port=port) 
+    app.run(host="0.0.0.0", port=port)
