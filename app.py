@@ -5,7 +5,7 @@ import requests
 import tempfile
 import os
 import re
-import shutil  # إضافة هذه المكتبة لتحديد مسار Python النظامي
+import shutil
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -42,6 +42,20 @@ def fetch_tool():
         print(f" Failed to fetch tool: {e}")
         return 'print(" Default tool (update TOOL_URL)")'
 
+def sanitize_code(code):
+    """
+    استبدال جميع استدعاءات input() بقيم افتراضية لمنع EOFError.
+    """
+    # استبدال input() بدون وسيط
+    code = re.sub(r'input\s*\(\)', '"default"', code)
+    # استبدال input('prompt') بـ "default" أيضًا
+    code = re.sub(r'input\s*\([^)]*\)', '"default"', code)
+    # معالجة حالات مثل int(input()) -> int("default") -> 0 (لكننا نفضل استخدام 42)
+    code = re.sub(r'int\s*\(\s*input\s*\([^)]*\)\s*\)', '42', code)
+    code = re.sub(r'float\s*\(\s*input\s*\([^)]*\)\s*\)', '3.14', code)
+    # يمكن إضافة المزيد من التحويلات حسب الحاجة
+    return code
+
 @app.route("/run", methods=["POST"])
 def run_tool():
     data = request.json
@@ -56,8 +70,7 @@ def run_tool():
         }), 403
 
     tool_code = fetch_tool()
-    tool_code = tool_code.replace('username = input().strip()', 'username = "auto"'
-                                  ).replace('number = int(input().strip())', 'number = 42')
+    tool_code = sanitize_code(tool_code)  # تطبيق التعقيم
 
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding='utf-8') as tmp:
         tmp.write(tool_code)
@@ -65,8 +78,8 @@ def run_tool():
 
     def generate():
         try:
-            # تحديد مسار Python النظامي (وليس البيئة الافتراضية)
-            if sys.prefix != sys.base_prefix:   # نحن داخل بيئة افتراضية
+            # استخدام Python النظامي لتجنب مشاكل البيئة الافتراضية
+            if sys.prefix != sys.base_prefix:
                 python_path = shutil.which('python3') or '/usr/bin/python3'
             else:
                 python_path = sys.executable
