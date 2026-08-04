@@ -36,23 +36,39 @@ def fetch_tool():
         print(f" Failed to fetch tool: {e}")
         return 'print(" Default tool (update TOOL_URL)")'
 
+def patch_tool_code(code):
+    """تعطيل input() وبيئة وهمية في الكود المُجلب"""
+    # 1. استبدال input() المعروف
+    code = code.replace('username = input().strip()', 'username = "auto"')
+    code = code.replace('number = int(input().strip())', 'number = 42')
+    
+    # 2. استبدال أي input() آخر بقيمة فارغة (لمنع EOFError)
+    code = re.sub(r'input\([^)]*\)', '""', code)
+    code = re.sub(r'input\(\)', '""', code)
+    
+    # 3. تعطيل فحص البيئة الوهمية في الكود المُجلب
+    code = code.replace(
+        'if (',
+        'if False and ('
+    )
+    # أو بشكل أدق - تعطيل شرط الخروج
+    code = code.replace(
+        'print("Please run this script using the official Termux Python.")',
+        'pass  # disabled venv check'
+    )
+    code = code.replace(
+        'sys.exit(1)',
+        'pass  # disabled exit'
+    )
+    
+    return code
+
 def get_clean_python():
-    """البحث عن Python النظامي (خارج البيئة الوهمية)"""
-    # نحاول العثور على python3 في PATH النظامي
-    python_path = shutil.which("python3")
-    if python_path:
-        return python_path
-    # نحاول python
-    python_path = shutil.which("python")
-    if python_path:
-        return python_path
-    # ملاذ أخير
-    return sys.executable
+    python_path = shutil.which("python3") or shutil.which("python")
+    return python_path or sys.executable
 
 def get_clean_env():
-    """إنشاء بيئة نظيفة خالية من متغيرات البيئة الوهمية"""
     clean_env = os.environ.copy()
-    # حذف كل متغيرات البيئة الوهمية
     for key in ["VIRTUAL_ENV", "PYTHONHOME", "_OLD_VIRTUAL_PATH", "_OLD_VIRTUAL_PROMPT"]:
         clean_env.pop(key, None)
     return clean_env
@@ -71,8 +87,7 @@ def run_tool():
         }), 403
 
     tool_code = fetch_tool()
-    tool_code = tool_code.replace('username = input().strip()', 'username = "auto"'
-                                  ).replace('number = int(input().strip())', 'number = 42')
+    tool_code = patch_tool_code(tool_code)
 
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding='utf-8') as tmp:
         tmp.write(tool_code)
@@ -82,13 +97,16 @@ def run_tool():
         try:
             python_path = get_clean_python()
             clean_env = get_clean_env()
+            
+            # stdin=DEVNULL لمنع EOFError عند input()
             proc = subprocess.Popen(
                 [python_path, tmp_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                env=clean_env  # <-- بيئة نظيفة بدون VIRTUAL_ENV
+                env=clean_env,
+                stdin=subprocess.DEVNULL
             )
             for line in iter(proc.stdout.readline, ''):
                 if line:
@@ -106,3 +124,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(" License server running...")
     app.run(host="0.0.0.0", port=port)
+
