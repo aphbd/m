@@ -16,6 +16,18 @@ LOG_FILE = os.getenv("LOG_FILE", "access.log")
 if not LICENSES_URL or not TOOL_URL:
     raise ValueError("L and TO env vars required")
 
+# متغيرات افتراضية نضيفها للكود حتى لا تنكسر الأدوات القديمة
+DEFAULT_VARS = """
+# Auto-injected variables for compatibility
+C = ''
+R = '\x1b[1;31m'
+G = '\x1b[1;32m'
+Y = '\x1b[1;33m'
+W = '\x1b[1;37m'
+P = '\x1b[1;35m'
+B = '\x1b[1;34m'
+"""
+
 def fetch_licenses():
     try:
         r = requests.get(LICENSES_URL, timeout=10)
@@ -69,12 +81,14 @@ def get_tool():
     if tool_code is None:
         return jsonify({"error": "Tool not available"}), 500
 
-    # تعديل بسيط لبعض المدخلات (اختياري)
-    tool_code = tool_code.replace('username = input().strip()', 'username = "auto"')
-    tool_code = tool_code.replace('number = int(input().strip())', 'number = 42')
+    # إضافة المتغيرات الافتراضية قبل الكود الأصلي
+    final_code = DEFAULT_VARS + "\n" + tool_code
 
-    # إرسال الكود الخام (نص)
-    return tool_code, 200, {"Content-Type": "text/plain; charset=utf-8"}
+    # تعديل بعض المدخلات (اختياري)
+    final_code = final_code.replace('username = input().strip()', 'username = "auto"')
+    final_code = final_code.replace('number = int(input().strip())', 'number = 42')
+
+    return final_code, 200, {"Content-Type": "text/plain; charset=utf-8"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
