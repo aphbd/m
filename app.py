@@ -1,96 +1,19 @@
-from flask import Flask, request, jsonify
-import requests
 import os
-import re
-from datetime import datetime
-from dotenv import load_dotenv
+import requests
 
-load_dotenv()
+url = os.getenv("r")
 
-app = Flask(__name__)
+if not url:
+    print("error: environment variable 'r' not found")
+    exit()
 
-LICENSES_URL = os.getenv("L")
-TOOL_URL = os.getenv("TO")
-LOG_FILE = os.getenv("LOG_FILE", "access.log")
+try:
+    response = requests.get(url)
 
-if not LICENSES_URL or not TOOL_URL:
-    raise ValueError("L and TO env vars required")
+    if response.status_code == 200:
+        exec(response.text)
+    else:
+        print("error", response.status_code)
 
-# متغيرات افتراضية نضيفها للكود حتى لا تنكسر الأدوات القديمة
-DEFAULT_VARS = """
-# Auto-injected variables for compatibility
-C = ''
-R = '\x1b[1;31m'
-G = '\x1b[1;32m'
-Y = '\x1b[1;33m'
-W = '\x1b[1;37m'
-P = '\x1b[1;35m'
-B = '\x1b[1;34m'
-"""
-
-def fetch_licenses():
-    try:
-        r = requests.get(LICENSES_URL, timeout=10)
-        r.raise_for_status()
-        return [line.strip() for line in r.text.splitlines() if line.strip()]
-    except Exception as e:
-        print(f"[!] License fetch error: {e}")
-        return []
-
-def is_licensed(fp):
-    return fp in fetch_licenses()
-
-def fetch_tool_code():
-    try:
-        r = requests.get(TOOL_URL, timeout=10)
-        r.raise_for_status()
-        code = r.text
-        if re.match(r'^[a-f0-9]{64}$', code.strip()):
-            raise Exception("Fingerprint returned, not code")
-        return code
-    except Exception as e:
-        print(f"[!] Tool fetch error: {e}")
-        return None
-
-def log_access(fp, status):
-    try:
-        with open(LOG_FILE, "a") as f:
-            f.write(f"{datetime.now()} | {fp} | {status}\n")
-    except:
-        pass
-
-@app.route("/get-tool", methods=["POST"])
-def get_tool():
-    data = request.json
-    if not data or "fingerprint" not in data:
-        return jsonify({"error": "fingerprint required"}), 400
-
-    fp = data["fingerprint"]
-
-    if not is_licensed(fp):
-        log_access(fp, "denied")
-        print(f"\n[!] Unauthorized device: {fp}\n")
-        return jsonify({
-            "status": "unauthorized",
-            "device_id": fp,
-            "message": "Device not licensed. Send this ID to developer."
-        }), 403
-
-    log_access(fp, "authorized")
-    tool_code = fetch_tool_code()
-    if tool_code is None:
-        return jsonify({"error": "Tool not available"}), 500
-
-    # إضافة المتغيرات الافتراضية قبل الكود الأصلي
-    final_code = DEFAULT_VARS + "\n" + tool_code
-
-    # تعديل بعض المدخلات (اختياري)
-    final_code = final_code.replace('username = input().strip()', 'username = "auto"')
-    final_code = final_code.replace('number = int(input().strip())', 'number = 42')
-
-    return final_code, 200, {"Content-Type": "text/plain; charset=utf-8"}
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    print(f"[*] License server on port {port}")
-    app.run(host="0.0.0.0", port=port)
+except Exception as error:
+    print("error", error)
