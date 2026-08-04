@@ -1,11 +1,16 @@
 from flask import Flask, request, Response, stream_with_context, jsonify
-import subprocess, sys, requests, tempfile, os, re
+import subprocess
+import sys
+import requests
+import tempfile
+import os
+import re
+import shutil  # إضافة هذه المكتبة لتحديد مسار Python النظامي
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
-
 
 LICENSES_URL = os.getenv("L")
 TOOL_URL = os.getenv("TO")
@@ -60,9 +65,19 @@ def run_tool():
 
     def generate():
         try:
-            proc = subprocess.Popen([sys.executable, tmp_path],
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, bufsize=1)
+            # تحديد مسار Python النظامي (وليس البيئة الافتراضية)
+            if sys.prefix != sys.base_prefix:   # نحن داخل بيئة افتراضية
+                python_path = shutil.which('python3') or '/usr/bin/python3'
+            else:
+                python_path = sys.executable
+
+            proc = subprocess.Popen(
+                [python_path, tmp_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
             for line in iter(proc.stdout.readline, ''):
                 if line:
                     yield line
@@ -76,7 +91,6 @@ def run_tool():
     return Response(stream_with_context(generate()), mimetype="text/plain")
 
 if __name__ == "__main__":
-    import os
     port = int(os.environ.get("PORT", 5000))
     print(" License server running...")
-    app.run(host="0.0.0.0", port=port) 
+    app.run(host="0.0.0.0", port=port)
