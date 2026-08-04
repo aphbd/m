@@ -37,35 +37,64 @@ def fetch_tool():
         return 'print(" Default tool (update TOOL_URL)")'
 
 def patch_tool_code(code):
-    """تعطيل input() وبيئة وهمية وتغيير منفذ الخادم"""
+    """تعديل الكود المُجلب بأمان - لا نلمس input() داخل strings"""
+    lines = code.split('\n')
+    new_lines = []
     
-    # 1. استبدال input() المعروف
-    code = code.replace('username = input().strip()', 'username = "auto"')
-    code = code.replace('number = int(input().strip())', 'number = 42')
+    for line in lines:
+        original = line
+        stripped = line.strip()
+        
+        # تخطي التعليقات
+        if stripped.startswith('#'):
+            new_lines.append(original)
+            continue
+        
+        # 🔴 استبدال input() فقط في تعيينات متغيرات (assignments)
+        # username = input().strip()  →  username = "auto"
+        if re.match(r'^(\s*)(\w+)\s*=\s*input\(\)\.strip\(\)\s*$', stripped):
+            var = re.match(r'^(\s*)(\w+)\s*=', stripped).group(2)
+            indent = re.match(r'^(\s*)', stripped).group(1)
+            new_lines.append(f'{indent}{var} = "auto"')
+            continue
+        
+        # number = int(input().strip())  →  number = 42
+        if re.match(r'^(\s*)(\w+)\s*=\s*int\(input\(\)\.strip\(\)\)\s*$', stripped):
+            var = re.match(r'^(\s*)(\w+)\s*=', stripped).group(2)
+            indent = re.match(r'^(\s*)', stripped).group(1)
+            new_lines.append(f'{indent}{var} = 42')
+            continue
+        
+        # أي variable = input(...)  →  variable = ""
+        if re.match(r'^(\s*)(\w+)\s*=\s*input\([^)]*\)\s*$', stripped):
+            var = re.match(r'^(\s*)(\w+)\s*=', stripped).group(2)
+            indent = re.match(r'^(\s*)', stripped).group(1)
+            new_lines.append(f'{indent}{var} = ""')
+            continue
+        
+        # تعطيل فحص البيئة الوهمية
+        if 'real_prefix' in stripped and stripped.startswith('if'):
+            indent = re.match(r'^(\s*)', stripped).group(1)
+            new_lines.append(f'{indent}if False:  # disabled venv check')
+            continue
+        
+        if 'Please run this script using the official Termux Python.' in stripped:
+            indent = re.match(r'^(\s*)', stripped).group(1)
+            new_lines.append(f'{indent}pass  # disabled venv msg')
+            continue
+        
+        if stripped == 'sys.exit(1)':
+            indent = re.match(r'^(\s*)', stripped).group(1)
+            new_lines.append(f'{indent}pass  # disabled exit')
+            continue
+        
+        # تغيير منفذ Flask إلى 0 (عشوائي)
+        if re.search(r'\bport\s*=\s*\d+\b', stripped) and not stripped.startswith('#'):
+            original = re.sub(r'\b(port\s*=\s*)\d+\b', r'\g<1>0', original)
+        
+        new_lines.append(original)
     
-    # 2. استبدال أي input() آخر بقيمة فارغة
-    code = re.sub(r'input\([^)]*\)', '""', code)
-    code = re.sub(r'input\(\)', '""', code)
-    
-    # 3. تعطيل فحص البيئة الوهمية
-    code = code.replace(
-        'print("Please run this script using the official Termux Python.")',
-        'pass  # disabled venv check'
-    )
-    code = code.replace('sys.exit(1)', 'pass  # disabled exit')
-    
-    # 4. 🔴 تغيير منفذ Flask/خادم إلى 0 (منفذ عشوائي متاح)
-    # استبدال أي تعريف منفذ ثابت
-    code = re.sub(r'port\s*=\s*int\(\s*os\.environ\.get\(["\']PORT["\']\s*,\s*\d+\s*\)\s*\)', 
-                  'port = 0', code)
-    code = re.sub(r'port\s*=\s*int\(\s*os\.environ\.get\(["\']PORT["\']\s*,\s*["\']\d+["\']\s*\)\s*\)', 
-                  'port = 0', code)
-    code = re.sub(r'port\s*=\s*\d+', 'port = 0', code)
-    
-    # 5. تعطيل app.run() إذا كان الكود لا يحتاج خادم (اختياري)
-    # code = code.replace('app.run(', '# app.run(')
-    
-    return code
+    return '\n'.join(new_lines)
 
 def get_clean_python():
     python_path = shutil.which("python3") or shutil.which("python")
@@ -75,7 +104,6 @@ def get_clean_env():
     clean_env = os.environ.copy()
     for key in ["VIRTUAL_ENV", "PYTHONHOME", "_OLD_VIRTUAL_PATH", "_OLD_VIRTUAL_PROMPT"]:
         clean_env.pop(key, None)
-    # 🔴 إجبار المنفذ على 0 في البيئة أيضاً
     clean_env['PORT'] = '0'
     return clean_env
 
@@ -95,7 +123,15 @@ def run_tool():
     tool_code = fetch_tool()
     tool_code = patch_tool_code(tool_code)
 
-    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding='utf-8') as tmp:
+    # 🔴 تشغيل الملف في المجلد الحالي بدلاً من /tmp
+    # (يحل مشكلة "بيئة موقتة" إذا كان الكود يحتاج ملفات جانبية)
+    with tempfile.NamedTemporaryFile(
+        suffix=".py", 
+        delete=False, 
+        mode="w", 
+        encoding='utf-8',
+        dir=os.getcwd()  # <-- في نفس المجلد
+    ) as tmp:
         tmp.write(tool_code)
         tmp_path = tmp.name
 
@@ -111,7 +147,8 @@ def run_tool():
                 text=True,
                 bufsize=1,
                 env=clean_env,
-                stdin=subprocess.DEVNULL
+                stdin=subprocess.DEVNULL,  # منع EOFError
+                cwd=os.getcwd()  # <-- العمل في المجلد الحالي
             )
             for line in iter(proc.stdout.readline, ''):
                 if line:
@@ -129,3 +166,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(" License server running...")
     app.run(host="0.0.0.0", port=port)
+
