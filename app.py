@@ -61,10 +61,28 @@ def run_tool():
         }), 403
 
     tool_code = fetch_tool_code()
-    # حقن تعريف C لتجنب الأخطاء
-    tool_code = "C = None\n" + tool_code
+    
+    # تحضير البيئة لحل مشاكل التنسيق
+    tool_code = (
+        "import sys, os\n"
+        "try:\n"
+        "    import colorama\n"
+        "    colorama.init()\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "try:\n"
+        "    sys.stdout.reconfigure(line_buffering=True)\n"
+        "except:\n"
+        "    pass\n"
+        "C = None\n"
+    ) + tool_code
+    
+    # تعديل المدخلات
     tool_code = tool_code.replace('username = input().strip()', 'username = "auto"')
     tool_code = tool_code.replace('number = int(input().strip())', 'number = 42')
+    
+    # إضافة تعريفات إضافية للمتغيرات الشائعة
+    tool_code = tool_code.replace('C = None\n', 'C = None\nF = None\nB = None\n')
 
     return tool_code, 200, {'Content-Type': 'text/plain'}
 
