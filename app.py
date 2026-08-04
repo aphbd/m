@@ -1,5 +1,5 @@
-from flask import Flask, request, Response, stream_with_context, jsonify
-import subprocess, sys, requests, tempfile, os, re
+from flask import Flask, request, jsonify
+import requests, os, re
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,7 +10,7 @@ LICENSES_URL = os.getenv("L")
 TOOL_URL = os.getenv("TO")
 
 if not LICENSES_URL or not TOOL_URL:
-    raise ValueError("LICENSES_URL and TOOL_URL must be set in .env file")
+    raise ValueError("L and TO must be set in .env")
 
 def fetch_licenses():
     try:
@@ -18,23 +18,24 @@ def fetch_licenses():
         r.raise_for_status()
         return [line.strip() for line in r.text.splitlines() if line.strip()]
     except Exception as e:
-        print(f" Failed to fetch licenses: {e}")
+        print(f"❌ Failed to fetch licenses: {e}")
         return []
 
 def is_licensed(fp):
     return fp in fetch_licenses()
 
-def fetch_tool():
+def fetch_tool_code():
     try:
         r = requests.get(TOOL_URL, timeout=10)
         r.raise_for_status()
         code = r.text
+        # منع أن يكون الرابط يشير إلى بصمة فقط
         if re.match(r'^[a-f0-9]{64}$', code.strip()):
             raise Exception("URL contains a fingerprint, not tool code.")
         return code
     except Exception as e:
-        print(f" Failed to fetch tool: {e}")
-        return 'print(" Default tool (update TOOL_URL)")'
+        print(f"❌ Failed to fetch tool: {e}")
+        return 'print("⚠️ Tool not available")'
 
 @app.route("/run", methods=["POST"])
 def run_tool():
@@ -43,51 +44,32 @@ def run_tool():
         return jsonify({"error": "Invalid data"}), 400
 
     fp = data["fingerprint"]
-    device_info = data.get("device_info", {})  # استقبال المعلومات الإضافية
+    device_info = data.get("device_info", {})
 
-    # طباعة المعلومات في سجل الخادم
-    print(f"[INFO] Received fingerprint: {fp}")
+    print(f"[INFO] Fingerprint: {fp}")
     if device_info:
         print("[INFO] Device info:")
-        for key, value in device_info.items():
-            print(f"    {key}: {value}")
+        for k, v in device_info.items():
+            print(f"    {k}: {v}")
 
     if not is_licensed(fp):
-        print(f"[WARN] Unauthorized fingerprint: {fp}")
-        # إرجاع الرفض مع المعلومات المرسلة لتظهر للعميل
+        print(f"[WARN] Unauthorized: {fp}")
         return jsonify({
             "status": "unauthorized",
-            "message": "Device not licensed. Contact the developer.",
+            "message": "Device not licensed.",
             "fingerprint": fp,
-            "device_info": device_info   # إعادة المعلومات في الرد
+            "device_info": device_info
         }), 403
 
-    tool_code = fetch_tool()
-    tool_code = tool_code.replace('username = input().strip()', 'username = "auto"'
-                                  ).replace('number = int(input().strip())', 'number = 42')
+    # 🟢 مرخص → نجلب الكود ونرسله مباشرة
+    tool_code = fetch_tool_code()
+    # تعديلات بسيطة (كما كانت)
+    tool_code = tool_code.replace('username = input().strip()', 'username = "auto"')
+    tool_code = tool_code.replace('number = int(input().strip())', 'number = 42')
 
-    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding='utf-8') as tmp:
-        tmp.write(tool_code)
-        tmp_path = tmp.name
-
-    def generate():
-        try:
-            proc = subprocess.Popen([sys.executable, tmp_path],
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, bufsize=1)
-            for line in iter(proc.stdout.readline, ''):
-                if line:
-                    yield line
-            proc.wait()
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except:
-                pass
-
-    return Response(stream_with_context(generate()), mimetype="text/plain")
+    return tool_code, 200, {'Content-Type': 'text/plain'}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(" License server running...")
+    print("✅ License server running (code delivery mode)...")
     app.run(host="0.0.0.0", port=port)
