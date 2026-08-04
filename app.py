@@ -1,10 +1,11 @@
-from flask import Flask, request, Response, jsonify
+from flask import Flask, request, Response, stream_with_context, jsonify
+import subprocess
 import sys
 import requests
+import tempfile
 import os
 import re
-import io
-from contextlib import redirect_stdout
+import shutil
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -42,7 +43,9 @@ def fetch_tool():
         return 'print(" Default tool (update TOOL_URL)")'
 
 def sanitize_code(code):
-    # استبدال جميع استدعاءات input() بقيم افتراضية لمنع EOFError
+    # استبدال input() بقيم افتراضية، لكن بطريقة آمنة
+    # نستبدل أي input(...) بـ "default" أو int/float بـ 42/3.14
+    # نتعامل مع الحالات التي قد تحتوي على سلاسل غير مغلقة؟ لا نستطيع إصلاحها بسهولة.
     code = re.sub(r'input\s*\([^)]*\)', '"default"', code)
     code = re.sub(r'int\s*\(\s*input\s*\([^)]*\)\s*\)', '42', code)
     code = re.sub(r'float\s*\(\s*input\s*\([^)]*\)\s*\)', '3.14', code)
@@ -64,16 +67,41 @@ def run_tool():
     tool_code = fetch_tool()
     tool_code = sanitize_code(tool_code)
 
-    # تنفيذ الكود مباشرة في نفس العملية
-    try:
-        f = io.StringIO()
-        with redirect_stdout(f):
-            exec(tool_code, {})  # بيئة فارغة لتقييد الوصول
-        output = f.getvalue()
-    except Exception as e:
-        output = f"Error executing tool: {str(e)}"
+    # نكتب الكود في ملف مؤقت لكننا سنحذفه فوراً بعد التنفيذ
+    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding='utf-8') as tmp:
+        tmp.write(tool_code)
+        tmp_path = tmp.name
 
-    return Response(output, mimetype="text/plain")
+    def generate():
+        try:
+            # استخدام Python النظامي
+            if sys.prefix != sys.base_prefix:
+                python_path = shutil.which('python3') or '/usr/bin/python3'
+            else:
+                python_path = sys.executable
+
+            # تشغيل مع إدخال افتراضي لتجنب EOFError
+            proc = subprocess.Popen(
+                [python_path, tmp_path],
+                stdin=subprocess.DEVNULL,  # لا ننتظر إدخال
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+            for line in iter(proc.stdout.readline, ''):
+                if line:
+                    yield line
+            proc.wait()
+        except Exception as e:
+            yield f"Execution error: {str(e)}"
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+
+    return Response(stream_with_context(generate()), mimetype="text/plain")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
