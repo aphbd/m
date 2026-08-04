@@ -29,7 +29,6 @@ def fetch_tool_code():
         r = requests.get(TOOL_URL, timeout=10)
         r.raise_for_status()
         code = r.text
-        # منع أن يكون الرابط يشير إلى بصمة فقط
         if re.match(r'^[a-f0-9]{64}$', code.strip()):
             raise Exception("URL contains a fingerprint, not tool code.")
         return code
@@ -61,9 +60,9 @@ def run_tool():
             "device_info": device_info
         }), 403
 
-    # 🟢 مرخص → نجلب الكود ونرسله مباشرة
     tool_code = fetch_tool_code()
-    # تعديلات بسيطة (كما كانت)
+    # حقن تعريف C لتجنب الأخطاء
+    tool_code = "C = None\n" + tool_code
     tool_code = tool_code.replace('username = input().strip()', 'username = "auto"')
     tool_code = tool_code.replace('number = int(input().strip())', 'number = 42')
 
